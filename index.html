@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TQQQ Paper Trading Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    body { background: #0a0e1a; color: #e2e8f0; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; }
+    .card-glow-green { box-shadow: 0 0 20px rgba(16, 185, 129, 0.08); border-color: #065f46; }
+    .card-glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.08); border-color: #7f1d1d; }
+    .badge-go { background: #064e3b; color: #34d399; border: 1px solid #065f46; }
+    .badge-skip { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+    .badge-neutral { background: #1c2533; color: #94a3b8; border: 1px solid #334155; }
+    .pulse-green { animation: pulse-green 2s infinite; }
+    .pulse-red { animation: pulse-red 2s infinite; }
+    @keyframes pulse-green { 0%,100%{ box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 50%{ box-shadow: 0 0 0 8px rgba(16,185,129,0); } }
+    @keyframes pulse-red { 0%,100%{ box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50%{ box-shadow: 0 0 0 8px rgba(239,68,68,0); } }
+    .stat-value { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+    .progress-bar { height: 6px; background: #1f2937; border-radius: 9999px; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 9999px; transition: width 1s ease; }
+    table { width: 100%; border-collapse: collapse; }
+    th { color: #6b7280; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #1f2937; }
+    td { padding: 0.65rem 1rem; border-bottom: 1px solid #111827; font-size: 0.85rem; }
+    tr:hover td { background: #1a2234; }
+    .spinner { width: 20px; height: 20px; border: 2px solid #1f2937; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    canvas { max-height: 220px; }
+    .ticker-band { background: linear-gradient(90deg, #0f172a, #111827, #0f172a); border-top: 1px solid #1f2937; border-bottom: 1px solid #1f2937; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="text-2xl font-bold tracking-tight text-white">TQQQ <span class="text-emerald-400">Paper Trading</span></div>
+        <span class="text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-300 border border-blue-800 mono">PAPER</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm text-gray-400">
+        <div class="flex items-center gap-2">
+          <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></div>
+          <span id="last-updated">Loading...</span>
+        </div>
+        <div id="spinner" class="spinner"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- TQQQ Price Band -->
+  <div class="ticker-band py-3 px-6">
+    <div class="max-w-7xl mx-auto flex items-center gap-8 text-sm mono">
+      <div class="flex items-center gap-2">
+        <span class="text-gray-500">TQQQ</span>
+        <span id="tqqq-price" class="text-white font-semibold text-base">—</span>
+        <span id="tqqq-change" class="text-gray-400">—</span>
+      </div>
+      <div class="flex items-center gap-6 text-gray-400">
+        <span>8 EMA: <span id="ema8-val" class="text-gray-200">—</span></span>
+        <span>20 SMA: <span id="sma20-val" class="text-gray-200">—</span></span>
+        <span>RSI-14: <span id="rsi-val" class="text-gray-200">—</span></span>
+        <span>Vol (20d): <span id="vol-val" class="text-gray-200">—</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Grid -->
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- Row 1: Signal + Tracker Progress + Backtest Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- Today's Signal -->
+      <div id="signal-card" class="card p-5">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Today's Signal</div>
+        <div class="flex items-center gap-3 mb-4">
+          <div id="signal-dot" class="w-4 h-4 rounded-full bg-gray-500"></div>
+          <div id="signal-label" class="text-2xl font-bold text-gray-400">—</div>
+        </div>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Regime</span>
+            <span id="regime-label" class="mono">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">8 EMA vs 20 SMA</span>
+            <span id="ema-vs-sma" class="mono">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">RSI-14</span>
+            <span id="rsi-label" class="mono">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Strike (if GO)</span>
+            <span id="strike-label" class="mono text-emerald-400">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Est. Premium</span>
+            <span id="premium-label" class="mono text-emerald-400">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6-Week Tracker -->
+      <div class="card p-5">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">6-Week Tracker</div>
+        <div class="flex justify-between items-end mb-4">
+          <div>
+            <div class="stat-value text-emerald-400" id="tracker-pnl">$0</div>
+            <div class="text-xs text-gray-500 mt-1">Cumulative P&L</div>
+          </div>
+          <div class="text-right">
+            <div class="text-lg font-semibold text-white" id="tracker-premiums">$0</div>
+            <div class="text-xs text-gray-500">Premiums collected</div>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <div class="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Progress</span>
+              <span id="weeks-progress">0 / 6 weeks</span>
+            </div>
+            <div class="progress-bar">
+              <div id="weeks-bar" class="progress-fill bg-blue-500" style="width:0%"></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3 pt-1">
+            <div class="bg-gray-900 rounded-lg p-3 text-center">
+              <div id="weeks-traded" class="text-xl font-bold text-emerald-400">0</div>
+              <div class="text-xs text-gray-500 mt-1">Weeks traded</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-3 text-center">
+              <div id="weeks-skipped" class="text-xl font-bold text-yellow-400">0</div>
+              <div class="text-xs text-gray-500 mt-1">Weeks skipped</div>
+            </div>
+          </div>
+          <div class="text-xs text-gray-600 mono pt-1" id="tracker-period">—</div>
+        </div>
+      </div>
+
+      <!-- Backtest Stats -->
+      <div class="card p-5">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Backtest Results (3yr)</div>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Strategy</span>
+            <span class="text-gray-300 font-medium">Regime-Filtered CSP</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Period</span>
+            <span class="text-gray-300 mono">Jan 2023 – Feb 2026</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Total P&L</span>
+            <span class="text-emerald-400 font-semibold">+$643</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Ann. ROI (filtered)</span>
+            <span class="text-emerald-400 font-semibold">24.0%</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Win Rate</span>
+            <span class="text-emerald-400 font-semibold">87.0%</span>
+          </div>
+          <div class="flex justify-between py-1 border-b border-gray-800">
+            <span class="text-gray-500">Trades</span>
+            <span class="text-gray-300">46 executed / 26 skipped</span>
+          </div>
+          <div class="flex justify-between py-1">
+            <span class="text-gray-500">2025 crash year</span>
+            <span class="text-emerald-400 font-semibold">+$421 (+68.8%)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: P&L Chart + Wheel Strategy -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- Cumulative P&L Chart -->
+      <div class="card p-5 md:col-span-2">
+        <div class="flex items-center justify-between mb-4">
+          <div class="text-xs text-gray-500 uppercase tracking-widest">Cumulative P&L — Strategy 2 (Live)</div>
+          <span class="badge-neutral text-xs px-2 py-1 rounded-full mono">6-week window</span>
+        </div>
+        <canvas id="pnl-chart"></canvas>
+        <div id="no-chart-data" class="text-center text-gray-600 text-sm py-8 hidden">No trades yet — waiting for first GO signal</div>
+      </div>
+
+      <!-- Wheel Strategy (Strategy 1) -->
+      <div class="card p-5">
+        <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Wheel Strategy (S1)</div>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Phase</span>
+            <span id="wheel-phase" class="text-sm font-medium text-blue-400 mono">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Cycles</span>
+            <span id="wheel-cycles" class="text-sm font-medium text-gray-300 mono">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Open CSPs</span>
+            <span id="wheel-csps" class="text-sm font-medium text-gray-300 mono">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Realized P&L</span>
+            <span id="wheel-pnl" class="text-sm font-medium text-gray-300 mono">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Premiums</span>
+            <span id="wheel-premiums" class="text-sm font-medium text-emerald-400 mono">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-500 text-sm">Cash Available</span>
+            <span id="wheel-cash" class="text-sm font-medium text-gray-300 mono">—</span>
+          </div>
+          <div class="border-t border-gray-800 pt-3">
+            <div class="text-xs text-gray-600 mb-2">Entry Rules</div>
+            <div class="text-xs text-gray-500 space-y-1">
+              <div>RSI ≤ 38 + Macro Score ≥ 1</div>
+              <div>Strike: 88–96% of live price</div>
+              <div>Stop: 60–75% of entry price</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: Signal History Table -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-xs text-gray-500 uppercase tracking-widest">Signal History — Strategy 2</div>
+        <span id="signal-count" class="badge-neutral text-xs px-2 py-1 rounded-full mono">0 signals</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Signal</th>
+              <th>Price</th>
+              <th>8 EMA</th>
+              <th>20 SMA</th>
+              <th>RSI-14</th>
+              <th>Strike</th>
+              <th>Est. Premium</th>
+              <th>ROI (wk)</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody id="signal-table-body">
+            <tr><td colspan="10" class="text-center text-gray-600 py-8">Loading signals...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-gray-800 py-4 px-6 mt-8">
+    <div class="max-w-7xl mx-auto flex items-center justify-between text-xs text-gray-600">
+      <div>Paper trading only · Not financial advice · Auto-updates daily at 8 AM ET</div>
+      <div class="mono">TQQQ Trading System v2.1</div>
+    </div>
+  </footer>
+
+<script>
+const DATA_URL = './data/data.json';
+let pnlChart = null;
+
+async function fetchData() {
+  try {
+    const r = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!r.ok) throw new Error('fetch failed');
+    return await r.json();
+  } catch(e) {
+    console.error('Data fetch error:', e);
+    return null;
+  }
+}
+
+function fmtDollar(v, showSign=false) {
+  if (v == null) return '—';
+  const s = Math.abs(v).toFixed(0);
+  const formatted = '$' + Number(s).toLocaleString();
+  if (showSign && v > 0) return '+' + formatted;
+  if (v < 0) return '-' + formatted;
+  return formatted;
+}
+
+function fmtPct(v) { return v != null ? (v > 0 ? '+' : '') + v.toFixed(1) + '%' : '—'; }
+function fmtPrice(v) { return v != null ? '$' + parseFloat(v).toFixed(2) : '—'; }
+function fmtRsi(v) { return v != null ? parseFloat(v).toFixed(1) : '—'; }
+
+function renderSignal(data) {
+  const csp = data.regime_csp;
+  const today = csp.trades && csp.trades.length ? csp.trades[csp.trades.length - 1] : null;
+
+  if (!today) return;
+
+  const isGo = today.signal === 'GO';
+  const card = document.getElementById('signal-card');
+
+  // Signal indicator
+  const dot = document.getElementById('signal-dot');
+  const label = document.getElementById('signal-label');
+  dot.className = 'w-4 h-4 rounded-full ' + (isGo ? 'bg-emerald-400 pulse-green' : 'bg-red-400 pulse-red');
+  label.textContent = isGo ? '🟢 GO' : '🔴 SKIP';
+  label.className = 'text-2xl font-bold ' + (isGo ? 'text-emerald-400' : 'text-red-400');
+  card.className = 'card p-5 ' + (isGo ? 'card-glow-green' : 'card-glow-red');
+
+  // Indicators
+  const ema8 = parseFloat(today.ema8);
+  const sma20 = parseFloat(today.sma20);
+  const rsi = parseFloat(today.rsi14);
+  const bullish = ema8 > sma20;
+
+  document.getElementById('regime-label').textContent = bullish ? '✅ Bullish' : '❌ Bearish';
+  document.getElementById('regime-label').className = 'mono ' + (bullish ? 'text-emerald-400' : 'text-red-400');
+  document.getElementById('ema-vs-sma').textContent = `$${ema8.toFixed(2)} ${bullish ? '>' : '<'} $${sma20.toFixed(2)}`;
+  document.getElementById('ema-vs-sma').className = 'mono ' + (bullish ? 'text-emerald-400' : 'text-red-400');
+
+  const rsiOk = rsi >= 35 && rsi <= 72;
+  document.getElementById('rsi-label').textContent = rsi.toFixed(1) + (rsiOk ? ' ✅' : ' ❌');
+  document.getElementById('rsi-label').className = 'mono ' + (rsiOk ? 'text-emerald-400' : 'text-red-400');
+
+  document.getElementById('strike-label').textContent = isGo && today.strike ? fmtPrice(today.strike) : '—';
+  document.getElementById('premium-label').textContent = isGo && today.total_premium ? fmtDollar(today.total_premium) : '—';
+
+  // Ticker band
+  document.getElementById('ema8-val').textContent = fmtPrice(today.ema8);
+  document.getElementById('sma20-val').textContent = fmtPrice(today.sma20);
+  document.getElementById('rsi-val').textContent = fmtRsi(today.rsi14);
+  const vol = today.vol ? (parseFloat(today.vol) * 100).toFixed(1) + '%' : '—';
+  document.getElementById('vol-val').textContent = vol;
+}
+
+function renderTracker(data) {
+  const csp = data.regime_csp;
+  const pnl = csp.total_pnl || 0;
+  const pnlEl = document.getElementById('tracker-pnl');
+  pnlEl.textContent = fmtDollar(pnl, true);
+  pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'text-emerald-400' : 'text-red-400');
+
+  document.getElementById('tracker-premiums').textContent = fmtDollar(csp.total_premiums || 0);
+
+  const traded = csp.weeks_traded || 0;
+  const skipped = csp.weeks_skipped || 0;
+  const total = 6;
+  const elapsed = traded + skipped;
+  document.getElementById('weeks-progress').textContent = `${elapsed} / ${total} weeks`;
+  document.getElementById('weeks-bar').style.width = Math.min(100, (elapsed / total) * 100) + '%';
+  document.getElementById('weeks-traded').textContent = traded;
+  document.getElementById('weeks-skipped').textContent = skipped;
+
+  const started = csp.started || '—';
+  const ends = csp.ends || '—';
+  document.getElementById('tracker-period').textContent = `${started} → ${ends}`;
+}
+
+function renderWheel(data) {
+  const w = data.wheel;
+  document.getElementById('wheel-phase').textContent = w.phase || 'CSP';
+  document.getElementById('wheel-cycles').textContent = w.cycles || 0;
+  document.getElementById('wheel-csps').textContent = w.open_csps != null ? `${w.open_csps} open` : '0 open';
+  document.getElementById('wheel-pnl').textContent = fmtDollar(w.realized_pnl || 0, true);
+  document.getElementById('wheel-premiums').textContent = fmtDollar(w.premium_collected || 0);
+  document.getElementById('wheel-cash').textContent = fmtDollar(w.cash_available || 0);
+}
+
+function renderPrice(data) {
+  const p = data.price_info;
+  if (!p) return;
+  const priceEl = document.getElementById('tqqq-price');
+  priceEl.textContent = fmtPrice(p.price);
+
+  const changeEl = document.getElementById('tqqq-change');
+  if (p.change_pct != null) {
+    const isPos = p.change_pct >= 0;
+    changeEl.textContent = (isPos ? '▲' : '▼') + ' ' + Math.abs(p.change_pct).toFixed(2) + '%';
+    changeEl.className = isPos ? 'text-emerald-400' : 'text-red-400';
+  }
+}
+
+function renderTable(data) {
+  const trades = (data.regime_csp.trades || []).slice().reverse();
+  document.getElementById('signal-count').textContent = trades.length + ' signals';
+  const tbody = document.getElementById('signal-table-body');
+
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-gray-600 py-8">No signals yet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = trades.map(t => {
+    const isGo = t.signal === 'GO';
+    const badgeClass = isGo ? 'badge-go' : 'badge-skip';
+    const note = isGo
+      ? `${t.roi_wk != null ? t.roi_wk.toFixed(2) + '% wk est.' : ''}`
+      : (t.reasons && t.reasons.length ? t.reasons[0].substring(0, 40) + '…' : 'Conditions not met');
+
+    return `<tr>
+      <td class="mono text-gray-400">${t.date}</td>
+      <td><span class="px-2 py-0.5 rounded-full text-xs font-semibold ${badgeClass}">${t.signal}</span></td>
+      <td class="mono">${fmtPrice(t.price)}</td>
+      <td class="mono">${fmtPrice(t.ema8)}</td>
+      <td class="mono">${fmtPrice(t.sma20)}</td>
+      <td class="mono ${parseFloat(t.rsi14) < 35 || parseFloat(t.rsi14) > 72 ? 'text-red-400' : 'text-gray-300'}">${fmtRsi(t.rsi14)}</td>
+      <td class="mono text-emerald-400">${isGo && t.strike ? fmtPrice(t.strike) : '—'}</td>
+      <td class="mono text-emerald-400">${isGo && t.total_premium ? fmtDollar(t.total_premium) : '—'}</td>
+      <td class="mono ${isGo ? 'text-emerald-400' : 'text-gray-600'}">${isGo && t.roi_wk ? t.roi_wk.toFixed(2) + '%' : '—'}</td>
+      <td class="text-gray-500 text-xs">${note}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderChart(data) {
+  const trades = (data.regime_csp.trades || []).filter(t => t.signal === 'GO');
+  const ctx = document.getElementById('pnl-chart').getContext('2d');
+  const noData = document.getElementById('no-chart-data');
+
+  if (!trades.length) {
+    noData.classList.remove('hidden');
+    document.getElementById('pnl-chart').classList.add('hidden');
+    return;
+  }
+
+  noData.classList.add('hidden');
+  document.getElementById('pnl-chart').classList.remove('hidden');
+
+  let cum = 0;
+  const labels = [], values = [];
+  for (const t of trades) {
+    cum += (t.total_pnl || t.total_premium || 0);
+    labels.push(t.date);
+    values.push(parseFloat(cum.toFixed(2)));
+  }
+
+  if (pnlChart) pnlChart.destroy();
+  pnlChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Cumulative P&L ($)',
+        data: values,
+        borderColor: cum >= 0 ? '#34d399' : '#f87171',
+        backgroundColor: cum >= 0 ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointBackgroundColor: cum >= 0 ? '#34d399' : '#f87171',
+        fill: true,
+        tension: 0.3
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ' $' + ctx.parsed.y.toFixed(2)
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#6b7280', font: { size: 10 } }, grid: { color: '#1f2937' } },
+        y: {
+          ticks: {
+            color: '#6b7280',
+            font: { size: 10 },
+            callback: v => '$' + v
+          },
+          grid: { color: '#1f2937' }
+        }
+      }
+    }
+  });
+}
+
+function setStatus(ok) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'w-2 h-2 rounded-full ' + (ok ? 'bg-emerald-400' : 'bg-red-400');
+  document.getElementById('spinner').style.display = 'none';
+}
+
+async function refresh() {
+  document.getElementById('spinner').style.display = 'block';
+  const data = await fetchData();
+  if (!data) { setStatus(false); return; }
+
+  renderPrice(data);
+  renderSignal(data);
+  renderTracker(data);
+  renderWheel(data);
+  renderTable(data);
+  renderChart(data);
+
+  const updated = data.updated_at ? new Date(data.updated_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour12: true, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' ET' : 'Unknown';
+  document.getElementById('last-updated').textContent = 'Updated ' + updated;
+  setStatus(true);
+}
+
+refresh();
+setInterval(refresh, 60000); // auto-refresh every 60 seconds
+</script>
+</body>
+</html>
